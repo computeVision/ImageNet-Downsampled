@@ -29,7 +29,7 @@ model_names = sorted(name for name in models.__dict__
 
 def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    parser.add_argument('data', metavar='DIR',
+    parser.add_argument('--data', default='/home/DATA/ITWM/Imagenet32x32', type=str, metavar='DIR',
                         help='path to dataset')
     parser.add_argument('--depth', default=50, type=int, metavar='D',
                         help='model depth')
@@ -75,10 +75,10 @@ def parse_args():
     return args
 
 
-def init_wandb(entity, project, model):
-    wandb.init(entity=entity, project=project, allow_val_change=True)
-    wandb.config.update(args)
-    wandb.watch(model)
+# def init_wandb(entity, project, model):
+#     wandb.init(entity=entity, project=project, allow_val_change=True)
+#     wandb.config.update(args)
+#     wandb.watch(model)
 
 
 def set_seed(seed):
@@ -165,13 +165,19 @@ def main():
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = get_model(int(args.depth), args.classes)
-    macs, params = get_model_stats(model, device)
+
+    # import pdb; pdb.set_trace()
+
+    macs, params = get_model_stats(model, device, size=32)
     model = model.to(device)
 
+    
     criterion, optimizer = get_loss_optim(model, device, args.lr, args.momentum, args.weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150],
                                                         last_epoch=0 - 1) if args.model_type == "cifar" else None
     model = torch.nn.DataParallel(model, device_ids=list(range(int(args.ngpu))))
+
+    
 
     if args.resume:
         start_epoch = get_model_checkpoint(args.resume, model, optimizer)
@@ -190,7 +196,10 @@ def main():
     with open("dataset_stats.json", "r") as f:
         stats = json.load(f)[dir_name]
     print(stats)
-    root = os.path.join(args.data, dir_name)
+    # root = os.path.join(args.data, dir_name)
+    root = args.data 
+
+    
     val_loader = get_dataloader(args.dataset, root, False, args.batch_size, args.workers, args.size, args.classes,
                                 **stats)
 
@@ -198,11 +207,11 @@ def main():
         validate(val_loader, model, criterion, 0)
         return
 
-    train_loader = get_dataloader(args.dataset, root, True, args.batch_size, args.workers, args.size, args.classes,
+    train_loader = get_dataloader(args.dataset, root + '/Imagenet32_train', True, args.batch_size, args.workers, args.size, args.classes,
                                   **stats)
 
-    init_wandb("landskape", args.project, model)
-    wandb.config.update({"Parameters": params, "FLOPs": macs})
+    # init_wandb("landskape", args.project, model)
+    # wandb.config.update({"Parameters": params, "FLOPs": macs})
     print(f"Parameters: {params}, FLOPs: {macs}")
     print(args)
     print(model)
@@ -217,7 +226,7 @@ def main():
 
         if args.model_type == "cifar":
             lr_scheduler.step()
-            wandb.log({'lr': lr_scheduler.get_last_lr()[0], 'epoch': epoch})
+            # wandb.log({'lr': lr_scheduler.get_last_lr()[0], 'epoch': epoch})
 
         # evaluate on validation set
         prec1 = validate(val_loader, model, criterion, epoch)
@@ -234,7 +243,7 @@ def main():
 
         end_time = datetime.now()
         delta = (end_time - start_time).total_seconds()
-        wandb.log({'epoch': epoch, "best_prec1": best_prec1, "Time (s)": delta})
+        # wandb.log({'epoch': epoch, "best_prec1": best_prec1, "Time (s)": delta})
         time_t = "m" if delta > 60 else "s"
         delta /= 60. if delta > 60 else 1.
         print(f"Epoch {epoch} Prec {prec1:.3f} Best {best_prec1:.3f} Time {delta:.2f} {time_t}")
@@ -287,12 +296,12 @@ def train(train_loader, model, criterion, optimizer, epoch):
                   'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(epoch, i, len(train_loader), batch_time=batch_time,
                                                                   data_time=data_time, loss=losses, top1=top1,
                                                                   top5=top5))
-        if i % args.log_freq == 0:
-            wandb.log(
-                {"Batch": epoch * len(train_loader) + i, "Batch Training time (ms)": batch_time.val * 10,
-                 "Batch Data time (ms)": data_time.val * 10,
-                 "Batch Training loss": losses.val, "Batch Training Top-1 accuracy": top1.val,
-                 "Batch Training Top-5 accuracy": top5.val})
+        # if i % args.log_freq == 0:
+        #     wandb.log(
+        #         {"Batch": epoch * len(train_loader) + i, "Batch Training time (ms)": batch_time.val * 10,
+        #          "Batch Data time (ms)": data_time.val * 10,
+        #          "Batch Training loss": losses.val, "Batch Training Top-1 accuracy": top1.val,
+        #          "Batch Training Top-5 accuracy": top5.val})
 
 
 def validate(val_loader, model, criterion, epoch):
@@ -316,7 +325,8 @@ def validate(val_loader, model, criterion, epoch):
             loss = criterion(output, target_var)
 
         # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
+        prec1 =  accuracy(output.data, target, topk=(1))
+        prec5 =  accuracy(output.data, target, topk=(5))
         losses.update(loss.data.item(), input.size(0))
         top1.update(prec1.item(), input.size(0))
         top5.update(prec5.item(), input.size(0))
@@ -338,12 +348,12 @@ def validate(val_loader, model, criterion, epoch):
           .format(top1=top1, top5=top5))
 
     # log stats to wandb
-    wandb.log({
-        'epoch': epoch,
-        'Top-1 accuracy': top1.avg,
-        'Top-5 accuracy': top5.avg,
-        'loss': losses.avg,
-    })
+    # wandb.log({
+    #     'epoch': epoch,
+    #     'Top-1 accuracy': top1.avg,
+    #     'Top-5 accuracy': top5.avg,
+    #     'loss': losses.avg,
+    # })
 
     return top1.avg
 
@@ -355,7 +365,7 @@ def save_checkpoint(state, is_best, prefix):
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, './checkpoints/%s_model_best.pth.tar' % prefix)
-        wandb.save(filename)
+        # wandb.save(filename)
 
 
 class AverageMeter(object):
@@ -382,7 +392,7 @@ def adjust_learning_rate(optimizer, epoch):
     lr = args.lr * (0.1 ** (epoch // 30))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-    wandb.log({'lr': lr, 'epoch': epoch})
+    # wandb.log({'lr': lr, 'epoch': epoch})
 
 
 def accuracy(output, target, topk=(1,)):
@@ -397,7 +407,9 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
+            # import pdb; pdb.set_trace()
             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            # correct_k = correct[:k].view(-1).float().sum(0)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
